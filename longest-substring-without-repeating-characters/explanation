@@ -1,0 +1,114 @@
+LONGEST SUBSTRING WITHOUT REPEATING CHARACTERS, AND THE JUMP THAT MAKES IT LINEAR
+
+
+THE PROBLEM
+
+Given a string, return the length of the longest run of consecutive characters that contains no repeats. "abcabcbb" gives you 3, for "abc". "bbbbb" gives you 1. "pwwkew" gives you 3, for "wke".
+
+Read that third example again before you write anything. "pwke" is longer and has no repeats, but it isn't an answer, because it isn't a substring. A substring is contiguous. Drop a character out of the middle and what you have is a subsequence, which is a different problem with a different solution. This is the first place people lose the problem, and they lose it in the reading, not in the coding.
+
+The constraints matter too. The string can be up to 10^5 characters, and it can contain letters, digits, symbols and spaces. Both of those facts are load-bearing, and I'll come back to each.
+
+
+THE OBVIOUS FIRST ATTEMPT
+
+Every substring, checked. Two nested loops to pick a start and an end, and some way to decide whether the piece between them has a duplicate.
+
+    for (int start = 0; start < n; start++) {
+        for (int end = start; end < n; end++) {
+            if (hasNoDuplicates(s, start, end)) {
+                longest = Math.max(longest, end - start + 1);
+            }
+        }
+    }
+
+There are about n^2 / 2 substrings, and scanning each one for duplicates costs up to n more, so this is O(n^3) in the worst case. You can cut that by building a set as you extend the end pointer instead of re-scanning from scratch, which drops it to O(n^2). Either way, at n = 10^5 you're looking at something on the order of 10^10 operations. Dead on arrival.
+
+That "10^5" in the constraints is a signal, by the way, and it's worth training yourself to read it. A bound of a few thousand tolerates a quadratic solution. A bound of 10^5 or more is the problem setter telling you they want O(n) or O(n log n). You can often eliminate an entire class of approaches before writing a line, just from the size of the input.
+
+
+THE OBSERVATION THAT KILLS THE NESTED LOOP
+
+Here's the thing the brute force is wasting. Suppose you're sitting on a window from index i to index j with no duplicates, and you extend to j+1 and hit a repeat. You now know something strong: no window starting at i and ending at j+1 or later will ever work. That duplicate isn't going anywhere as long as i stays put. There's no reason to keep testing longer windows from i, and no reason to ever restart the outer loop from i+1 and re-walk ground you've already covered.
+
+So instead of two independent loops, you keep one window and move its edges. The right edge marches forward one character at a time. The left edge moves forward only when it has to, which is exactly when the new character collides with something already inside the window.
+
+The straightforward way to write that uses a set:
+
+    Set<Character> window = new HashSet<>();
+    int start = 0, longest = 0;
+    for (int end = 0; end < s.length(); end++) {
+        while (!window.add(s.charAt(end))) {
+            window.remove(s.charAt(start++));
+        }
+        longest = Math.max(longest, end - start + 1);
+    }
+
+HashSet.add returns false when the element is already there, so the inner while loop keeps evicting characters from the left until the collision is gone.
+
+Now, be honest about what this bought you. This is already O(n). Every character enters the set once and leaves at most once, so the inner loop can't run more than n times in total across the whole execution, no matter how it looks nested on the page. That reasoning is called amortized analysis: you don't bound the inner loop per iteration, you bound its total work across the run.
+
+So the version I'm about to describe is not an asymptotic improvement. What it improves is the constant factor, and it does that in two ways: it replaces up to n one-step crawls and hash operations with a single assignment, and it swaps the hash set for a flat array. On a problem where the input is 10^5 characters, that's the difference between comfortable and borderline, not between passing and failing. I'd rather tell you that than sell you a fake speedup.
+
+
+THE KEY INSIGHT
+
+The left edge of the window never moves backward.
+
+That's it. That single property is what makes this problem linear, and it's what lets you stop crawling and start jumping. If you know the position of the previous occurrence of the character you just consumed, you don't need to walk the left edge over to it one step at a time. You can drop it directly to one past that occurrence, because every position in between was already ruled out.
+
+But "never moves backward" is a property you have to actively enforce, not one you get for free. The stored position of a previous occurrence might be stale, referring to a character that fell out of the window a long time ago. If you jump unconditionally, you'll drag the left edge backward and start reporting windows that contain duplicates. So the jump is guarded: take the stored position only if it's actually ahead of where the left edge currently sits.
+
+How would you have spotted this on your own? Ask one question whenever you're scanning a sequence looking for the best range ending at each position: as the right edge moves forward by one, can the smallest valid left edge ever get smaller? Here it can't, because adding a character to a window can only introduce a duplicate, never remove one. The constraint is monotone, so the window is one-directional, so you get a sliding window.
+
+And the same question tells you when the pattern does not apply. Take "longest subarray with sum at most k" over an array that may contain negative numbers. Extending the right edge can now decrease the sum, which can make a previously invalid left edge valid again. The left boundary can move backward, the sliding window collapses, and you need prefix sums with a hash map instead. Same diagnostic question, opposite answer. That's the part worth carrying to the next problem.
+
+
+THE PITFALLS
+
+The unguarded jump. This is the bug, and it's easy to write:
+
+    windowStart = positionAfterLastSeen[current];   // no guard
+
+Run "abba" through it. At index 2 you hit the second 'b', jump the left edge to 2, and the window is just "b". At index 3 you hit 'a', whose last-seen position points back to the very start of the string, and the left edge slides backward to 1. Your window is now "bba", you report a length of 3, and the correct answer is 2. It passes every example in the problem statement and fails on a four-character string.
+
+Measuring before shrinking. Update your best length before moving the left edge and you'll happily count a window that still contains the duplicate you just found. On "abba", that reports 3 as well. Shrink first, measure second.
+
+The sentinel collision. If your table stores raw indices and you initialize it to zero to mean "never seen", then a character sitting at index 0 is indistinguishable from a character you've never encountered. Storing index + 1 instead, so that zero can only mean "unseen", removes the ambiguity. Initializing the table to -1 works too. Picking neither is a silent wrong answer on strings whose first character reappears.
+
+Sizing the table to the wrong alphabet. It's tempting to write new int[26] because the problem says "letters". Read the constraint again: digits, symbols and spaces. The first space in the input walks straight off the end of a 26-slot array.
+
+
+THE CODE
+
+    class Solution {
+        private static final int ASCII_ALPHABET_SIZE = 128;
+
+        public int lengthOfLongestSubstring(String s) {
+            int[] positionAfterLastSeen = new int[ASCII_ALPHABET_SIZE];
+            int windowStart = 0;
+            int longest = 0;
+
+            for (int end = 0; end < s.length(); end++) {
+                char current = s.charAt(end);
+                if (positionAfterLastSeen[current] > windowStart) {
+                    windowStart = positionAfterLastSeen[current];
+                }
+                longest = Math.max(longest, end - windowStart + 1);
+                positionAfterLastSeen[current] = end + 1;
+            }
+
+            return longest;
+        }
+    }
+
+The whole solution is three lines of logic in a loop, and the `>` on line four is doing more work than it looks like it is. It's the enforcement of the monotonicity property, and it's the difference between this code and the "abba" bug above.
+
+
+COMPLEXITY, AND ONE ASSUMPTION
+
+Time is O(n). The right edge visits each index exactly once. The left edge only ever increases and is bounded by n, so its total movement across the entire run is at most n. Every operation inside the loop is an array read, an array write and a comparison, all constant time.
+
+Space is O(1). The table is 128 integers regardless of whether the input is 5 characters or 100,000.
+
+That O(1) rests on an assumption worth stating out loud: that the input is ASCII. The array indexes directly by the char value, and a Java char runs to 65535. Feed this a non-ASCII character and you don't get a wrong answer, you get an ArrayIndexOutOfBoundsException. For this problem's test data that's fine, and taking the fixed array is the right trade. Outside it, swap in a HashMap<Character, Integer> for the same asymptotics at a higher constant factor, and iterate by code point if you need to handle characters outside the basic multilingual plane. Knowing which assumption you took, and what breaks when it stops holding, is worth more than the assumption itself.
